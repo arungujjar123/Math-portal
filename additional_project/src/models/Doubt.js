@@ -29,4 +29,8 @@ const DoubtSchema = new mongoose.Schema({
   messages: [MessageSchema]
 }, { timestamps: true });
 
-export default mongoose.models.Doubt || mongoose.model('Doubt', DoubtSchema);
+// Hot reload keeps the previously compiled model in mongoose.models, so new schema
+// fields (like attachments) would be silently dropped on save. Recompile every time.
+if (mongoose.models.Doubt) mongoose.deleteModel('Doubt');
+
+export default mongoose.model('Doubt', DoubtSchema);
