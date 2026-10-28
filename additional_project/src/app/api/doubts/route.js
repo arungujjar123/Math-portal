@@ -2,6 +2,15 @@ import { NextResponse } from 'next/server';
 import { ensureDatabaseSeeded } from '@/lib/dbInit';
 import Doubt from '@/models/Doubt';
 
+// Keep only well-formed attachments coming from /api/upload
+function sanitizeAttachments(attachments) {
+  if (!Array.isArray(attachments)) return [];
+  return attachments
+    .filter(a => a && typeof a.url === 'string' && typeof a.name === 'string')
+    .slice(0, 5)
+    .map(({ url, name, type, size }) => ({ url, name, type, size }));
+}
+
 export async function GET(request) {
   try {
     await ensureDatabaseSeeded();
@@ -32,9 +41,10 @@ export async function POST(request) {
 
     const body = await request.json();
     const { studentId, studentName, studentRoll, studentAvatar, subject, title, initialMessage } = body;
+    const attachments = sanitizeAttachments(body.attachments);
 
-    if (!title || !initialMessage) {
-      return NextResponse.json({ error: 'Title and Question text are required' }, { status: 400 });
+    if (!title || (!initialMessage && attachments.length === 0)) {
+      return NextResponse.json({ error: 'Title and a question (text or photo) are required' }, { status: 400 });
     }
 
     const now = new Date();
@@ -54,7 +64,8 @@ export async function POST(request) {
           senderId: studentId || 'u2',
           senderName: studentName || 'Rahul Verma',
           role: 'student',
-          text: initialMessage,
+          text: initialMessage || '',
+          attachments,
           timestamp: timeStr
         }
       ]
@@ -75,9 +86,10 @@ export async function PUT(request) {
 
     const body = await request.json();
     const { doubtId, senderId, senderName, role, text, newStatus } = body;
+    const attachments = sanitizeAttachments(body.attachments);
 
-    if (!doubtId || !text) {
-      return NextResponse.json({ error: 'Doubt ID and Message text are required' }, { status: 400 });
+    if (!doubtId || (!text && attachments.length === 0)) {
+      return NextResponse.json({ error: 'Doubt ID and a message (text or attachment) are required' }, { status: 400 });
     }
 
     const now = new Date();
@@ -87,7 +99,8 @@ export async function PUT(request) {
       senderId,
       senderName,
       role: role || 'teacher',
-      text,
+      text: text || '',
+      attachments,
       timestamp: timeStr
     };
 

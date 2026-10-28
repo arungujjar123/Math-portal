@@ -1,8 +1,15 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { toViewableUrl } from '@/lib/fileUrl';
-import { MessageSquare, Send, CheckCircle, Clock, Plus, User, AlertCircle, Filter, Sparkles, BookOpen, Check, HelpCircle, X, Paperclip, FileText } from 'lucide-react';
+import { toViewableUrl, toDownloadUrl } from '@/lib/fileUrl';
+import { MessageSquare, Send, CheckCircle, Clock, Plus, User, AlertCircle, Filter, Sparkles, BookOpen, Check, HelpCircle, X, Paperclip, FileText, ImagePlus, Loader2, Download } from 'lucide-react';
+
+const ACCEPTED_ATTACHMENT_TYPES = 'image/*,application/pdf';
+const MAX_ATTACHMENT_SIZE_MB = 5;
+const MAX_ATTACHMENTS = 5;
+
+const isImageAttachment = (att) =>
+  att?.type?.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|heic)$/i.test(att?.name || '');
 
 export default function ChatSystem({ user }) {
   const isTeacher = user?.role === 'teacher';
@@ -13,19 +20,31 @@ export default function ChatSystem({ user }) {
   const [replyText, setReplyText] = useState('');
   const [showNewDoubtModal, setShowNewDoubtModal] = useState(false);
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
-  const [attachmentUrl, setAttachmentUrl] = useState('');
+  const [replyAttachments, setReplyAttachments] = useState([]);
+  const [attachmentError, setAttachmentError] = useState('');
+  const [previewImage, setPreviewImage] = useState(null);
 
   // New Doubt Form State
   const [newTitle, setNewTitle] = useState('');
   const [newSubject, setNewSubject] = useState('DBMS');
   const [newQuestion, setNewQuestion] = useState('');
+  const [newAttachments, setNewAttachments] = useState([]);
 
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
+  const newFileInputRef = useRef(null);
 
   useEffect(() => {
     fetchDoubts();
   }, [user]);
+
+  // Close the photo viewer with Escape
+  useEffect(() => {
+    if (!previewImage) return;
+    const onKeyDown = (e) => e.key === 'Escape' && setPreviewImage(null);
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [previewImage]);
 
   useEffect(() => {
     scrollToBottom();
@@ -56,11 +75,29 @@ export default function ChatSystem({ user }) {
 
   const activeDoubt = doubts.find(d => d.id === activeDoubtId);
 
-  const handleAttachmentUpload = async (e) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      setUploadingAttachment(true);
-      try {
+  // Uploads photos / PDFs and appends them to the given pending list
+  const uploadAttachments = async (fileList, currentCount, setList) => {
+    const files = Array.from(fileList || []);
+    if (files.length === 0) return;
+    setAttachmentError('');
+
+    if (currentCount + files.length > MAX_ATTACHMENTS) {
+      setAttachmentError(`You can attach up to ${MAX_ATTACHMENTS} files per message.`);
+      return;
+    }
+
+    setUploadingAttachment(true);
+    try {
+      for (const file of files) {
+        if (!file.type.startsWith('image/') && file.type !== 'application/pdf') {
+          setAttachmentError(`${file.name}: only photos and PDFs are allowed.`);
+          continue;
+        }
+        if (file.size > MAX_ATTACHMENT_SIZE_MB * 1024 * 1024) {
+          setAttachmentError(`${file.name} is larger than ${MAX_ATTACHMENT_SIZE_MB} MB.`);
+          continue;
+        }
+
         const formData = new FormData();
         formData.append('file', file);
 
@@ -71,20 +108,50 @@ export default function ChatSystem({ user }) {
 
         const data = await res.json();
         if (data.success) {
-          setAttachmentUrl(data.url);
-          setReplyText(prev => `${prev} [Attachment: ${file.name}](${data.url})`);
+          setList(prev => [...prev, { url: data.url, name: file.name, type: file.type, size: data.fileSize }]);
+        } else {
+          setAttachmentError(`Failed to upload ${file.name}.`);
         }
-      } catch (err) {
-        console.error('Attachment upload failed:', err);
-      } finally {
-        setUploadingAttachment(false);
       }
+    } catch (err) {
+      console.error('Attachment upload failed:', err);
+      setAttachmentError('Attachment upload failed. Please try again.');
+    } finally {
+      setUploadingAttachment(false);
     }
+  };
+
+  const handleAttachmentUpload = async (e) => {
+    const files = e.target.files;
+    await uploadAttachments(files, replyAttachments.length, setReplyAttachments);
+    e.target.value = '';
+  };
+
+  const handleNewDoubtAttachmentUpload = async (e) => {
+    const files = e.target.files;
+    await uploadAttachments(files, newAttachments.length, setNewAttachments);
+    e.target.value = '';
+  };
+
+  // Lets users paste a screenshot (Ctrl+V) straight into the question / reply box
+  const handlePasteImages = (e, currentCount, setList) => {
+    const images = Array.from(e.clipboardData?.files || []).filter(f => f.type.startsWith('image/'));
+    if (images.length === 0) return;
+    e.preventDefault();
+    uploadAttachments(images, currentCount, setList);
+  };
+
+  const closeNewDoubtModal = () => {
+    setShowNewDoubtModal(false);
+    setNewAttachments([]);
+    setAttachmentError('');
   };
 
   const handleSendReply = async (customText = null, newStatus = null) => {
     const textToSend = customText || replyText;
-    if (!textToSend.trim() || !activeDoubtId) return;
+    // Quick-reply presets send only their text; pending attachments go with a normal reply
+    const attachmentsToSend = customText ? [] : replyAttachments;
+    if ((!textToSend.trim() && attachmentsToSend.length === 0) || !activeDoubtId || uploadingAttachment) return;
 
     try {
       const res = await fetch('/api/doubts', {
@@ -95,7 +162,8 @@ export default function ChatSystem({ user }) {
           senderId: user?.id,
           senderName: user?.name,
           role: user?.role,
-          text: textToSend,
+          text: textToSend.trim(),
+          attachments: attachmentsToSend,
           newStatus: newStatus || (isTeacher ? 'In Progress' : activeDoubt?.status)
         })
       });
@@ -104,7 +172,8 @@ export default function ChatSystem({ user }) {
       if (data.success && data.doubt) {
         setDoubts(doubts.map(d => d.id === activeDoubtId ? data.doubt : d));
         setReplyText('');
-        setAttachmentUrl('');
+        if (attachmentsToSend.length > 0) setReplyAttachments([]);
+        setAttachmentError('');
       }
     } catch (err) {
       console.error('Send message error', err);
@@ -113,7 +182,11 @@ export default function ChatSystem({ user }) {
 
   const handleCreateDoubt = async (e) => {
     e.preventDefault();
-    if (!newTitle.trim() || !newQuestion.trim()) return;
+    if (uploadingAttachment || !newTitle.trim()) return;
+    if (!newQuestion.trim() && newAttachments.length === 0) {
+      setAttachmentError('Describe your doubt or attach a photo of it.');
+      return;
+    }
 
     try {
       const res = await fetch('/api/doubts', {
@@ -126,7 +199,8 @@ export default function ChatSystem({ user }) {
           studentAvatar: user?.avatar,
           subject: newSubject,
           title: newTitle,
-          initialMessage: newQuestion
+          initialMessage: newQuestion.trim(),
+          attachments: newAttachments
         })
       });
 
@@ -134,7 +208,7 @@ export default function ChatSystem({ user }) {
       if (data.success && data.doubt) {
         setDoubts([data.doubt, ...doubts]);
         setActiveDoubtId(data.doubt.id);
-        setShowNewDoubtModal(false);
+        closeNewDoubtModal();
         setNewTitle('');
         setNewQuestion('');
       }
@@ -202,6 +276,87 @@ export default function ChatSystem({ user }) {
     return parts.length > 0 ? parts : text;
   };
 
+  // Photos show inline (click to enlarge), PDFs show as a link chip
+  const renderMessageAttachments = (attachments, isMsgTeacher, hasText) => {
+    if (!attachments || attachments.length === 0) return null;
+
+    return (
+      <div className={`flex flex-wrap gap-2 ${hasText ? 'mt-2' : ''}`}>
+        {attachments.map((att, idx) =>
+          isImageAttachment(att) ? (
+            <button
+              key={idx}
+              type="button"
+              onClick={() => setPreviewImage(att)}
+              title={att.name}
+              className={`block rounded-lg overflow-hidden border bg-white ${
+                isMsgTeacher ? 'border-emerald-400/60' : 'border-slate-200'
+              }`}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={toViewableUrl(att.url)}
+                alt={att.name}
+                loading="lazy"
+                className="max-h-48 max-w-[240px] object-cover hover:opacity-90 transition-opacity"
+              />
+            </button>
+          ) : (
+            <a
+              key={idx}
+              href={toViewableUrl(att.url)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition-colors ${
+                isMsgTeacher
+                  ? 'bg-emerald-700/60 text-emerald-50 hover:bg-emerald-700'
+                  : 'bg-white text-emerald-700 border border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span className="truncate max-w-[180px]">{att.name}</span>
+            </a>
+          )
+        )}
+      </div>
+    );
+  };
+
+  // Thumbnails of files attached but not sent yet, with a remove button
+  const renderPendingAttachments = (attachments, setList) => {
+    if (attachments.length === 0) return null;
+
+    return (
+      <div className="flex flex-wrap gap-2">
+        {attachments.map((att, idx) => (
+          <div key={idx} className="relative group">
+            {isImageAttachment(att) ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={toViewableUrl(att.url)}
+                alt={att.name}
+                className="w-16 h-16 object-cover rounded-lg border border-slate-200 bg-white"
+              />
+            ) : (
+              <div className="w-16 h-16 rounded-lg border border-slate-200 bg-white flex flex-col items-center justify-center p-1 text-slate-500">
+                <FileText className="w-5 h-5 text-emerald-600" />
+                <span className="text-[9px] truncate w-full text-center mt-1">{att.name}</span>
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => setList(prev => prev.filter((_, i) => i !== idx))}
+              title="Remove"
+              className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-slate-800 text-white flex items-center justify-center hover:bg-red-600 transition-colors"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   const filteredDoubts = doubts.filter(d => {
     if (filterStatus === 'All') return true;
     return d.status.toLowerCase() === filterStatus.toLowerCase();
@@ -230,7 +385,10 @@ export default function ChatSystem({ user }) {
         </div>
         {!isTeacher && (
           <button
-            onClick={() => setShowNewDoubtModal(true)}
+            onClick={() => {
+              setAttachmentError('');
+              setShowNewDoubtModal(true);
+            }}
             className="flex items-center justify-center space-x-1.5 px-3.5 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white font-semibold text-xs transition-all border border-white/15 backdrop-blur-md shrink-0 active:scale-95"
           >
             <Plus className="w-4 h-4 text-emerald-300" />
@@ -401,7 +559,8 @@ export default function ChatSystem({ user }) {
                             : 'bg-slate-100 text-slate-800 rounded-2xl rounded-tl-sm'
                         }`}
                       >
-                        {renderMessageContent(msg.text, isMsgTeacher)}
+                        {msg.text && renderMessageContent(msg.text, isMsgTeacher)}
+                        {renderMessageAttachments(msg.attachments, isMsgTeacher, !!msg.text)}
                       </div>
                     </div>
                   );
@@ -428,43 +587,55 @@ export default function ChatSystem({ user }) {
               )}
 
               {/* Message Input Bar */}
-              <div className="p-3 bg-slate-50 border-t border-slate-100 flex items-center space-x-2">
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={handleAttachmentUpload}
-                  className="hidden"
-                />
+              <div className="p-3 bg-slate-50 border-t border-slate-100 space-y-2">
+                {renderPendingAttachments(replyAttachments, setReplyAttachments)}
+                {attachmentError && !showNewDoubtModal && (
+                  <p className="text-[11px] font-medium text-red-600">{attachmentError}</p>
+                )}
 
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  title="Attach File"
-                  className="p-2 rounded-lg hover:bg-slate-200 text-slate-500 transition-colors"
-                >
-                  <Paperclip className="w-4 h-4" />
-                </button>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    accept={ACCEPTED_ATTACHMENT_TYPES}
+                    multiple
+                    onChange={handleAttachmentUpload}
+                    className="hidden"
+                  />
 
-                <input
-                  type="text"
-                  placeholder={
-                    uploadingAttachment 
-                      ? "Uploading attachment..." 
-                      : (isTeacher ? "Type your explanation..." : "Ask follow-up question...")
-                  }
-                  value={replyText}
-                  onChange={(e) => setReplyText(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSendReply()}
-                  className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-emerald-500 transition-colors"
-                />
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploadingAttachment}
+                    title="Attach photo or PDF"
+                    className="p-2 rounded-lg hover:bg-slate-200 text-slate-500 transition-colors disabled:opacity-50"
+                  >
+                    {uploadingAttachment ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
+                  </button>
 
-                <button
-                  onClick={() => handleSendReply()}
-                  className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs transition-colors flex items-center space-x-2"
-                >
-                  <Send className="w-4 h-4" />
-                  <span className="hidden sm:inline">Send</span>
-                </button>
+                  <input
+                    type="text"
+                    placeholder={
+                      uploadingAttachment
+                        ? "Uploading attachment..."
+                        : (isTeacher ? "Type your explanation..." : "Ask follow-up question...")
+                    }
+                    value={replyText}
+                    onChange={(e) => setReplyText(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleSendReply()}
+                    onPaste={(e) => handlePasteImages(e, replyAttachments.length, setReplyAttachments)}
+                    className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-emerald-500 transition-colors"
+                  />
+
+                  <button
+                    onClick={() => handleSendReply()}
+                    disabled={uploadingAttachment}
+                    className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs transition-colors flex items-center space-x-2 disabled:opacity-50"
+                  >
+                    <Send className="w-4 h-4" />
+                    <span className="hidden sm:inline">Send</span>
+                  </button>
+                </div>
               </div>
             </>
           ) : (
@@ -488,7 +659,7 @@ export default function ChatSystem({ user }) {
                 <h3 className="text-base font-bold text-slate-900">Ask Doubt to Professor</h3>
               </div>
               <button
-                onClick={() => setShowNewDoubtModal(false)}
+                onClick={closeNewDoubtModal}
                 className="text-slate-400 hover:text-slate-700 p-1 rounded-lg transition-colors"
               >
                 <X className="w-4 h-4" />
@@ -534,30 +705,95 @@ export default function ChatSystem({ user }) {
                 </label>
                 <textarea
                   rows={4}
-                  required
-                  placeholder="Describe your doubt in detail..."
+                  placeholder="Describe your doubt in detail... (you can also paste a screenshot here)"
                   value={newQuestion}
                   onChange={(e) => setNewQuestion(e.target.value)}
+                  onPaste={(e) => handlePasteImages(e, newAttachments.length, setNewAttachments)}
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-emerald-500"
                 />
+              </div>
+
+              <div className="space-y-2">
+                <input
+                  type="file"
+                  ref={newFileInputRef}
+                  accept={ACCEPTED_ATTACHMENT_TYPES}
+                  multiple
+                  onChange={handleNewDoubtAttachmentUpload}
+                  className="hidden"
+                />
+                {renderPendingAttachments(newAttachments, setNewAttachments)}
+                <button
+                  type="button"
+                  onClick={() => newFileInputRef.current?.click()}
+                  disabled={uploadingAttachment || newAttachments.length >= MAX_ATTACHMENTS}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-dashed border-slate-300 text-xs font-medium text-slate-600 hover:border-emerald-500 hover:text-emerald-700 transition-colors disabled:opacity-50"
+                >
+                  {uploadingAttachment ? <Loader2 className="w-4 h-4 animate-spin" /> : <ImagePlus className="w-4 h-4" />}
+                  <span>{uploadingAttachment ? 'Uploading...' : 'Attach photo / PDF'}</span>
+                </button>
+                <p className="text-[11px] text-slate-400">
+                  Up to {MAX_ATTACHMENTS} files, {MAX_ATTACHMENT_SIZE_MB} MB each.
+                </p>
+                {attachmentError && (
+                  <p className="text-[11px] font-medium text-red-600">{attachmentError}</p>
+                )}
               </div>
 
               <div className="flex items-center justify-end space-x-3 pt-2">
                 <button
                   type="button"
-                  onClick={() => setShowNewDoubtModal(false)}
+                  onClick={closeNewDoubtModal}
                   className="px-4 py-2 rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 text-xs font-medium transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition-colors"
+                  disabled={uploadingAttachment}
+                  className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition-colors disabled:opacity-50"
                 >
                   Submit Doubt
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Photo Viewer */}
+      {previewImage && (
+        <div
+          onClick={() => setPreviewImage(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm animate-fade-in"
+        >
+          <div onClick={(e) => e.stopPropagation()} className="relative max-w-4xl w-full flex flex-col items-center">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={toViewableUrl(previewImage.url)}
+              alt={previewImage.name}
+              className="max-h-[80vh] max-w-full rounded-lg shadow-lg bg-white"
+            />
+            <div className="w-full flex items-center justify-between mt-3 text-xs text-white">
+              <span className="truncate font-medium">{previewImage.name}</span>
+              <div className="flex items-center space-x-2 shrink-0">
+                <a
+                  href={toDownloadUrl(previewImage.url, previewImage.name)}
+                  download={previewImage.name}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/15 font-semibold transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download</span>
+                </a>
+                <button
+                  onClick={() => setPreviewImage(null)}
+                  title="Close"
+                  className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/15 transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
