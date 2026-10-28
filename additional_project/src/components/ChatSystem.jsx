@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import { toViewableUrl } from '@/lib/fileUrl';
 import { MessageSquare, Send, CheckCircle, Clock, Plus, User, AlertCircle, Filter, Sparkles, BookOpen, Check, HelpCircle, X, Paperclip, FileText } from 'lucide-react';
 
 export default function ChatSystem({ user }) {
@@ -180,7 +181,7 @@ export default function ChatSystem({ user }) {
       parts.push(
         <a
           key={match.index}
-          href={match[2]}
+          href={toViewableUrl(match[2])}
           target="_blank"
           rel="noopener noreferrer"
           className={`underline font-semibold transition-colors inline-flex items-center gap-1 ${

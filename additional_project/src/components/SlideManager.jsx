@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { toViewableUrl, toDownloadUrl } from '@/lib/fileUrl';
 import { Upload, Download, Search, FileText, Trash2, Plus, Eye, CheckCircle2, X, Filter, BookOpen, Clock, FileDown, ExternalLink } from 'lucide-react';
 
 export default function SlideManager({ user }) {
@@ -41,7 +42,7 @@ export default function SlideManager({ user }) {
           setPreviewBlobUrl(previewSlide.fileUrl);
         }
       } else {
-        setPreviewBlobUrl(previewSlide.fileUrl);
+        setPreviewBlobUrl(toViewableUrl(previewSlide.fileUrl));
       }
     } else {
       setPreviewBlobUrl(null);
@@ -176,7 +177,7 @@ export default function SlideManager({ user }) {
         console.error('Error opening in new tab:', e);
       }
     } else {
-      window.open(slide.fileUrl, '_blank', 'noopener,noreferrer');
+      window.open(toViewableUrl(slide.fileUrl), '_blank', 'noopener,noreferrer');
     }
   };
 
@@ -200,7 +201,7 @@ export default function SlideManager({ user }) {
       }
     } else {
       const link = document.createElement('a');
-      link.href = slide.fileUrl;
+      link.href = toDownloadUrl(slide.fileUrl, filename);
       link.target = '_blank';
       link.download = filename;
       document.body.appendChild(link);
