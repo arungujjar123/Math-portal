@@ -19,6 +19,14 @@ export async function GET(request) {
     const studentId = searchParams.get('studentId');
     const status = searchParams.get('status');
 
+    // ?summary=1 → just counts per status (used for the teacher's navbar badge)
+    if (searchParams.get('summary')) {
+      const rows = await Doubt.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]);
+      const counts = { Pending: 0, 'In Progress': 0, Resolved: 0 };
+      rows.forEach(r => { if (r._id in counts) counts[r._id] = r.count; });
+      return NextResponse.json({ counts });
+    }
+
     let query = {};
     if (studentId) {
       query.studentId = studentId;

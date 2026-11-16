@@ -1,12 +1,15 @@
 'use client';
 
 import React from 'react';
-import { BookOpen, MessageSquare, Calendar, LogOut, User, ShieldCheck, GraduationCap, Library as LibraryIcon, Building2, Percent, CalendarClock } from 'lucide-react';
+import { BookOpen, MessageSquare, Calendar, LogOut, User, ShieldCheck, GraduationCap, Library as LibraryIcon, Building2, Percent, CalendarClock, Inbox, Megaphone } from 'lucide-react';
+import ThemeToggle from '@/components/ThemeToggle';
 
-export default function Navbar({ user, activeTab, setActiveTab, onLogout }) {
+export default function Navbar({ user, activeTab, setActiveTab, onLogout, badges = {} }) {
   const isTeacher = user?.role === 'teacher';
 
   const allNavItems = [
+    { id: 'pending', label: 'Pending Doubts', icon: Inbox, forTeacher: true, forStudent: false }, // Teacher-only dashboard
+    { id: 'announcements', label: 'Announcements', icon: Megaphone, forTeacher: true, forStudent: true },
     { id: 'timetable', label: isTeacher ? 'Extra Class Finder' : 'UG2 Timetable', icon: Calendar, forTeacher: true, forStudent: true },
     { id: 'rooms', label: 'Room Finder', icon: Building2, forTeacher: true, forStudent: true },
     { id: 'attendance', label: 'Attendance (75%)', icon: Percent, forTeacher: false, forStudent: true }, // Student-only!
@@ -58,6 +61,8 @@ export default function Navbar({ user, activeTab, setActiveTab, onLogout }) {
               </div>
             </div>
 
+            <ThemeToggle />
+
             <button
               onClick={onLogout}
               title="Logout"
@@ -86,6 +91,16 @@ export default function Navbar({ user, activeTab, setActiveTab, onLogout }) {
                 >
                   <Icon className={`w-4 h-4 transition-transform duration-200 ${isActive ? 'scale-110' : ''}`} />
                   <span>{item.label}</span>
+                  {badges[item.id] > 0 && (
+                    <span
+                      className={`min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold flex items-center justify-center tabular-nums ${
+                        item.id === 'pending' ? 'bg-rose-500 text-white' : 'bg-emerald-600 text-white'
+                      }`}
+                      aria-label={`${badges[item.id]} new`}
+                    >
+                      {badges[item.id] > 99 ? '99+' : badges[item.id]}
+                    </span>
+                  )}
                 </button>
               );
             })}

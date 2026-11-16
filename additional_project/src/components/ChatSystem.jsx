@@ -11,10 +11,11 @@ const MAX_ATTACHMENTS = 5;
 const isImageAttachment = (att) =>
   att?.type?.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|heic)$/i.test(att?.name || '');
 
-export default function ChatSystem({ user }) {
+export default function ChatSystem({ user, initialDoubtId = null }) {
   const isTeacher = user?.role === 'teacher';
   const [doubts, setDoubts] = useState([]);
-  const [activeDoubtId, setActiveDoubtId] = useState(null);
+  // Set when the teacher clicks "Reply" on the Pending Doubts dashboard
+  const [activeDoubtId, setActiveDoubtId] = useState(initialDoubtId);
   const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState('All');
   const [replyText, setReplyText] = useState('');
